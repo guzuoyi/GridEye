@@ -200,6 +200,17 @@ class MainPipeline:
 
                 frame = sampled.image
 
+                # 首帧生成路面掩码 + 人工确认
+                if self.road_mask is None and frame is not None:
+                    from src.lane.ipm import RoadMask
+                    self.road_mask = RoadMask(
+                        image_size=(frame.shape[1], frame.shape[0]),
+                    )
+                    self.road_mask.generate_initial()
+                    if visualize:
+                        self.road_mask.confirm_with_gui(frame)
+                    logger.info("Road mask confirmed")
+
                 # 2. YOLO 检测
                 detections = self.yolo.detect(frame)
                 t_yolo = time.time()
@@ -509,6 +520,8 @@ class MainPipeline:
         # 连续帧 < 2 的不画（单帧误检不显示）
         for rec in records:
             if rec.consecutive_frames < 2:
+                continue
+            if self.road_mask is not None and not self.road_mask.contains(rec.center_x, rec.center_y):
                 continue
             color = STATE_COLORS.get(rec.state, (255, 255, 255))
             cx, cy = int(rec.center_x), int(rec.center_y)

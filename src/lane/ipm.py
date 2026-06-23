@@ -468,80 +468,46 @@ class LUTLookup:
 # =============================================================================
 
 class RoadMask:
-    """基于 IPM 地面投影的路面区域掩码。
+    """四边形路面掩码 —— 首帧人工标注 5 个顶点，后续 O(1) 包含判定。
 
-    首次启动时，对第一帧进行路面区域估计，后续查表 O(1)。
+    路面在画面中呈现梯形（上窄下宽），用 5 个顶点精确描述。
+    四个红色圆圈可鼠标拖拽调整。
 
     用法:
-        mask = RoadMask(image_size=(1920, 1080))
-        mask.generate_from_image(first_frame)
-        is_road = mask.contains(cx, cy)  # True 表示目标在路面上
+        mask = RoadMask(W=1920, H=1080)
+        mask.generate_initial()
+        mask.confirm_with_gui(frame)  # 交互确认顶点
+        is_road = mask.contains(cx, cy)
     """
 
-    def __init__(
-        self,
-        image_size: tuple = (1920, 1080),
-        horizon_ratio: float = 0.45,       # 消失点默认在画面 45% 高度
-        bottom_margin: int = 20,            # 底部边缘忽略像素数
-        road_min_width_ratio: float = 0.3,  # 路面最少占画面宽度的 30%
-    ):
+    def __init__(self, image_size: tuple = (1920, 1080)):
         self.W, self.H = image_size
-        self.horizon_ratio = horizon_ratio
-        self.bottom_margin = bottom_margin
-        self.road_min_width = int(self.W * road_min_width_ratio)
         self._mask: np.ndarray | None = None
+        # 5 个顶点: [top_left, top_right, bottom_right, bottom_left]
+        self.corners: list[list[int]] = [
+            [int(self.W * 0.25), int(self.H * 0.45)],  # 0 TL
+            [int(self.W * 0.75), int(self.H * 0.45)],  # 1 TR
+            [int(self.W * 0.85), int(self.H * 0.85)],  # 2 R
+            [int(self.W * 0.50), int(self.H * 0.95)],  # 3 BC (bottom center)
+            [int(self.W * 0.15), int(self.H * 0.85)],  # 4 L
+        ]
+        self._dragging_idx = -1
+        self._drag_offset = (0, 0)
+        self._scale = (1.0, 1.0)  # display->original coords
 
-    def generate_from_image(self, frame: np.ndarray) -> np.ndarray:
-        """从第一帧生成路面掩码。
+    def generate_initial(self) -> np.ndarray:
+        """生成初始四边形掩码。"""
+        return self._update_mask()
 
-        策略: 基于图像下半部分的亮度/边缘特征估计路面区域。
-        返回: (H, W) 二值掩码，1=路面，0=非路面
-        """
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
-
-        # 消失点 y 坐标（水平线）
-        vanish_y = int(self.H * self.horizon_ratio)
-
-        # 路面区域 = 消失点以下，排除底部边缘
-        road_top = vanish_y
-        road_bottom = self.H - self.bottom_margin
-
-        if road_bottom <= road_top:
-            road_bottom = self.H
-            road_top = 0
-
-        # 在路面区域做 Canny 边缘检测，边缘密集区域=路面纹理
-        roi = gray[road_top:road_bottom, :]
-        edges = cv2.Canny(roi, 50, 150)
-
-        # 每行统计边缘密度，密度高的行可能是路面
-        # 路面通常有规则的车道线纹理
-        edge_density = np.mean(edges, axis=1) if edges.size > 0 else np.zeros(road_bottom - road_top)
-        road_rows = edge_density > np.percentile(edge_density, 30) if len(edge_density) > 5 else np.ones_like(edge_density, dtype=bool)
-
-        # 左右边界检测：路面中心区域的纹理通常较一致
-        # 简化：假设路面占画面中心 70%
-        left = int(w * 0.15)
-        right = int(w * 0.85)
-
-        # 生成掩码
-        for y_idx in range(len(road_rows)):
-            if road_rows[y_idx]:
-                mask[road_top + y_idx, left:right] = 1
-
-        # 形态学闭运算填充空隙
-        kernel = np.ones((5, 20), dtype=np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        self._mask = mask
-        return mask
+    def _update_mask(self) -> np.ndarray:
+        self._mask = np.zeros((self.H, self.W), dtype=np.uint8)
+        pts = np.array(self.corners, dtype=np.int32)
+        cv2.fillPoly(self._mask, [pts], 1)
+        return self._mask
 
     def contains(self, x: float, y: float) -> bool:
-        """判断像素坐标 (x, y) 是否在路面上。"""
         if self._mask is None:
-            return True  # 无掩码时默认放行
+            return True
         ix, iy = int(x), int(y)
         if ix < 0 or ix >= self.W or iy < 0 or iy >= self.H:
             return False
@@ -552,9 +518,75 @@ class RoadMask:
         return self._mask
 
     def draw(self, image: np.ndarray, alpha: float = 0.3) -> np.ndarray:
-        """在图像上绘制路面区域（绿色半透明）。"""
+        """绘制半透明四边形 + 红色顶点。"""
         if self._mask is None:
             return image
         overlay = image.copy()
         overlay[self._mask == 1] = (0, 255, 0)
-        return cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+        result = cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
+        pts = np.array(self.corners, dtype=np.int32)
+        cv2.polylines(result, [pts], True, (0, 255, 0), 2)
+        for i, (cx, cy) in enumerate(self.corners):
+            cv2.circle(result, (cx, cy), 8, (0, 0, 255), -1)
+            cv2.putText(result, str(i), (cx + 12, cy + 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
+        return result
+
+    def _mouse_callback(self, event, x, y, flags, param):
+        # Convert display coords to original image coords
+        sx, sy = self._scale
+        ox, oy = int(x * sx), int(y * sy)
+        if event == cv2.EVENT_LBUTTONDOWN:
+            for i, (cx, cy) in enumerate(self.corners):
+                dist = ((cx - ox) ** 2 + (cy - oy) ** 2) ** 0.5
+                if dist < 30:
+                    self._dragging_idx = i
+                    self._drag_offset = (cx - ox, cy - oy)
+                    break
+        elif event == cv2.EVENT_MOUSEMOVE and self._dragging_idx >= 0:
+            self.corners[self._dragging_idx] = [
+                max(0, min(self.W - 1, ox + self._drag_offset[0])),
+                max(0, min(self.H - 1, oy + self._drag_offset[1])),
+            ]
+            self._update_mask()
+        elif event == cv2.EVENT_LBUTTONUP:
+            self._dragging_idx = -1
+
+    def confirm_with_gui(self, frame: np.ndarray, window_name: str = "Road Mask") -> bool:
+        """交互式标定：拖拽红色圆圈调整四边形，Enter 确认。"""
+        if self._mask is None:
+            self.generate_initial()
+
+        h, w = frame.shape[:2]
+        disp_w, disp_h = 1280, 720
+        self._scale = (w / disp_w, h / disp_h)
+        cv2.namedWindow(window_name)
+        cv2.setMouseCallback(window_name, self._mouse_callback)
+
+        while True:
+            overlay = self.draw(frame)
+            display = cv2.resize(overlay, (disp_w, disp_h))
+
+            info = [
+                "Drag red circles (0-3) to fit road area",
+                "R: reset  Enter: confirm  Q/Esc: cancel",
+            ]
+            for i, txt in enumerate(info):
+                cv2.putText(display, txt, (10, 25 + i * 28),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            cv2.imshow(window_name, display)
+            key = cv2.waitKey(30) & 0xFF
+
+            if key == 13:
+                cv2.destroyWindow(window_name)
+                return True
+            elif key == ord('q') or key == 27:
+                self._mask = None
+                cv2.destroyWindow(window_name)
+                return False
+            elif key == ord('r'):
+                self.__init__(image_size=(self.W, self.H))
+                self._scale = (w / disp_w, h / disp_h)
+                self.generate_initial()
+                self._update_mask()
