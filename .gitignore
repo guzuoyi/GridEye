@@ -16,10 +16,15 @@ __pycache__/
 # Archive data
 archive/
 
-# Temp fix scripts
+# Temp files
 _fix*.py
 _f*.py
-*.py
-!src/**/*.py
-!tests/**/*.py
-!run.py
+debug*.py
+debug*.txt
+test_*.py
+!tests/**
+*.whl
+*.log
+
+# Git
+.gitignore
