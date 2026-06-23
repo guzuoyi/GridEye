@@ -468,10 +468,7 @@ class LUTLookup:
 # =============================================================================
 
 class RoadMask:
-    """四边形路面掩码 —— 首帧人工标注 5 个顶点，后续 O(1) 包含判定。
-
-    路面在画面中呈现梯形（上窄下宽），用 5 个顶点精确描述。
-    四个红色圆圈可鼠标拖拽调整。
+    """5 边形路面掩码 —— 首帧基于车道线自动生成 + 可拖拽微调。
 
     用法:
         mask = RoadMask(W=1920, H=1080)
@@ -496,7 +493,103 @@ class RoadMask:
         self._scale = (1.0, 1.0)  # display->original coords
 
     def generate_initial(self) -> np.ndarray:
-        """生成初始四边形掩码。"""
+        """生成初始 5 边形掩码（基于默认值）。"""
+        return self._update_mask()
+
+    def generate_from_lanes(self, frame: np.ndarray) -> np.ndarray:
+        """基于车道线检测自动生成初始 5 边形。
+
+        步骤:
+            1. Canny 边缘检测
+            2. HoughLinesP 检测线段
+            3. 按斜率/位置聚合成左右车道线
+            4. 用车道线条的端点构建 5 边形
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+
+        lines = cv2.HoughLinesP(
+            edges, rho=1, theta=np.pi / 180,
+            threshold=50, minLineLength=80, maxLineGap=50,
+        )
+
+        left_pts, right_pts = [], []
+        W, H = self.W, self.H
+
+        if lines is not None:
+            for l in lines:
+                x1, y1, x2, y2 = l[0]
+                if y2 == y1:
+                    continue
+                slope = (x2 - x1) / (y2 - y1)
+                center_x = (x1 + x2) / 2
+                # 过滤水平线 (slope < 0.1)
+                if abs(slope) < 0.1:
+                    continue
+                # 按位置和斜率分左右
+                if center_x < W * 0.5 and slope > 0:
+                    left_pts.append((x1, y1))
+                    left_pts.append((x2, y2))
+                elif center_x >= W * 0.5 and slope < 0:
+                    right_pts.append((x1, y1))
+                    right_pts.append((x2, y2))
+
+        # 如果车道线检测失败，回退默认值
+        if len(left_pts) < 2 or len(right_pts) < 2:
+            self.corners = [
+                [int(W * 0.25), int(H * 0.45)],
+                [int(W * 0.75), int(H * 0.45)],
+                [int(W * 0.85), int(H * 0.85)],
+                [int(W * 0.50), int(H * 0.95)],
+                [int(W * 0.15), int(H * 0.85)],
+            ]
+            return self._update_mask()
+
+        # 提取最上端和最下端的点
+        left_pts.sort(key=lambda p: p[1])  # 按 y 排序
+        right_pts.sort(key=lambda p: p[1])
+
+        top_y = max(min(left_pts[0][1], right_pts[0][1]), 0)
+        bot_y = min(max(left_pts[-1][1], right_pts[-1][1]), H - 1)
+
+        # 拟合左右车道线
+        left_arr = np.array(left_pts)
+        right_arr = np.array(right_pts)
+        if len(left_arr) >= 2:
+            l_coeffs = np.polyfit(left_arr[:, 1], left_arr[:, 0], 1)
+        else:
+            l_coeffs = [0, int(W * 0.25)]
+        if len(right_arr) >= 2:
+            r_coeffs = np.polyfit(right_arr[:, 1], right_arr[:, 0], 1)
+        else:
+            r_coeffs = [0, int(W * 0.75)]
+
+        # 计算四个角点
+        tl_x = max(0, int(l_coeffs[0] * top_y + l_coeffs[1]))
+        tr_x = min(W - 1, int(r_coeffs[0] * top_y + r_coeffs[1]))
+        bl_x = max(0, int(l_coeffs[0] * bot_y + l_coeffs[1]))
+        br_x = min(W - 1, int(r_coeffs[0] * bot_y + r_coeffs[1]))
+        bc_x = (bl_x + br_x) // 2  # 底部中点
+
+        # 向外扩展 20% 以覆盖完整车道宽度
+        margin = int((tr_x - tl_x) * 0.15)
+        tl_x = max(0, tl_x - margin)
+        tr_x = min(W - 1, tr_x + margin)
+        bl_x = max(0, bl_x - margin)
+        br_x = min(W - 1, br_x + margin)
+
+        # 加一些底部垂直扩展
+        bot_y = min(H - 1, bot_y + int(H * 0.05))
+
+        self.corners = [
+            [tl_x, top_y],      # 0 TL
+            [tr_x, top_y],      # 1 TR
+            [br_x, bot_y],      # 2 R
+            [bc_x, min(H-1, bot_y + int(H*0.03))],  # 3 BC
+            [bl_x, bot_y],      # 4 L
+        ]
+
         return self._update_mask()
 
     def _update_mask(self) -> np.ndarray:
@@ -553,7 +646,7 @@ class RoadMask:
             self._dragging_idx = -1
 
     def confirm_with_gui(self, frame: np.ndarray, window_name: str = "Road Mask") -> bool:
-        """交互式标定：拖拽红色圆圈调整四边形，Enter 确认。"""
+        """交互式标定：拖拽红色圆圈调整 5 边形，Enter 确认。"""
         if self._mask is None:
             self.generate_initial()
 

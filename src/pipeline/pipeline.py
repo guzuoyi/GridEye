@@ -206,7 +206,7 @@ class MainPipeline:
                     self.road_mask = RoadMask(
                         image_size=(frame.shape[1], frame.shape[0]),
                     )
-                    self.road_mask.generate_initial()
+                    self.road_mask.generate_from_lanes(frame)
                     if visualize:
                         self.road_mask.confirm_with_gui(frame)
                     logger.info("Road mask confirmed")
@@ -218,6 +218,16 @@ class MainPipeline:
                 # 3. 尺寸过滤
                 detections = self.size_filter.filter(detections)
                 t_filter = time.time()
+
+                # 3.5 路面过滤（只保留路面范围内的检测）
+                if self.road_mask is not None:
+                    before = len(detections)
+                    detections = [
+                        d for d in detections
+                        if self.road_mask.contains(d.center[0], d.center[1])
+                    ]
+                    if len(detections) < before:
+                        logger.debug(f"Road mask filtered {before - len(detections)} detections")
 
                 # 4. 防闪烁
                 for det in detections:
