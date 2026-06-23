@@ -76,6 +76,7 @@ class MainPipeline:
         self.qwen_scheduler = None
         self.archiver = None
         self.lut_maintainer = None
+        self.road_mask = None  # RoadMask, 首帧生成
 
         # 统计
         self.total_frames = 0
@@ -317,13 +318,12 @@ class MainPipeline:
         if rec.consecutive_frames < 2:
             return
 
-        # 过滤：画面顶部 40% 区域（y < 0.4*H）非道路，跳过
-        h = frame.shape[0]
-        if rec.center_y < h * 0.4:
+        # 过滤：lane=-1 且 LUT 存在（道路外目标）
+        if rec.lane_number < 0 and self.lut_maintainer is not None:
             return
 
-        # 过滤：lane=-1（道路外目标）且距离 < 5m（过于靠近边缘）
-        if rec.lane_number < 0 and self.lut_maintainer is not None:
+        # 过滤：不在路面掩码内
+        if self.road_mask is not None and not self.road_mask.contains(rec.center_x, rec.center_y):
             return
 
         # 状态机评估

@@ -461,3 +461,100 @@ class LUTLookup:
         """
         cx, cy = center
         return LUTLookup.lookup_point(lut, int(cx), int(cy))
+
+
+# =============================================================================
+# RoadMask —— 基于 IPM 的路面区域检测
+# =============================================================================
+
+class RoadMask:
+    """基于 IPM 地面投影的路面区域掩码。
+
+    首次启动时，对第一帧进行路面区域估计，后续查表 O(1)。
+
+    用法:
+        mask = RoadMask(image_size=(1920, 1080))
+        mask.generate_from_image(first_frame)
+        is_road = mask.contains(cx, cy)  # True 表示目标在路面上
+    """
+
+    def __init__(
+        self,
+        image_size: tuple = (1920, 1080),
+        horizon_ratio: float = 0.45,       # 消失点默认在画面 45% 高度
+        bottom_margin: int = 20,            # 底部边缘忽略像素数
+        road_min_width_ratio: float = 0.3,  # 路面最少占画面宽度的 30%
+    ):
+        self.W, self.H = image_size
+        self.horizon_ratio = horizon_ratio
+        self.bottom_margin = bottom_margin
+        self.road_min_width = int(self.W * road_min_width_ratio)
+        self._mask: np.ndarray | None = None
+
+    def generate_from_image(self, frame: np.ndarray) -> np.ndarray:
+        """从第一帧生成路面掩码。
+
+        策略: 基于图像下半部分的亮度/边缘特征估计路面区域。
+        返回: (H, W) 二值掩码，1=路面，0=非路面
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape[:2]
+        mask = np.zeros((h, w), dtype=np.uint8)
+
+        # 消失点 y 坐标（水平线）
+        vanish_y = int(self.H * self.horizon_ratio)
+
+        # 路面区域 = 消失点以下，排除底部边缘
+        road_top = vanish_y
+        road_bottom = self.H - self.bottom_margin
+
+        if road_bottom <= road_top:
+            road_bottom = self.H
+            road_top = 0
+
+        # 在路面区域做 Canny 边缘检测，边缘密集区域=路面纹理
+        roi = gray[road_top:road_bottom, :]
+        edges = cv2.Canny(roi, 50, 150)
+
+        # 每行统计边缘密度，密度高的行可能是路面
+        # 路面通常有规则的车道线纹理
+        edge_density = np.mean(edges, axis=1) if edges.size > 0 else np.zeros(road_bottom - road_top)
+        road_rows = edge_density > np.percentile(edge_density, 30) if len(edge_density) > 5 else np.ones_like(edge_density, dtype=bool)
+
+        # 左右边界检测：路面中心区域的纹理通常较一致
+        # 简化：假设路面占画面中心 70%
+        left = int(w * 0.15)
+        right = int(w * 0.85)
+
+        # 生成掩码
+        for y_idx in range(len(road_rows)):
+            if road_rows[y_idx]:
+                mask[road_top + y_idx, left:right] = 1
+
+        # 形态学闭运算填充空隙
+        kernel = np.ones((5, 20), dtype=np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        self._mask = mask
+        return mask
+
+    def contains(self, x: float, y: float) -> bool:
+        """判断像素坐标 (x, y) 是否在路面上。"""
+        if self._mask is None:
+            return True  # 无掩码时默认放行
+        ix, iy = int(x), int(y)
+        if ix < 0 or ix >= self.W or iy < 0 or iy >= self.H:
+            return False
+        return bool(self._mask[iy, ix])
+
+    @property
+    def mask(self) -> np.ndarray | None:
+        return self._mask
+
+    def draw(self, image: np.ndarray, alpha: float = 0.3) -> np.ndarray:
+        """在图像上绘制路面区域（绿色半透明）。"""
+        if self._mask is None:
+            return image
+        overlay = image.copy()
+        overlay[self._mask == 1] = (0, 255, 0)
+        return cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0)
