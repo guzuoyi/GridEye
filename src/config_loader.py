@@ -43,6 +43,7 @@ class StateMachineConfig:
     dwell_frames_to_warning: int = 5
     confirmed_refresh_interval: float = 30.0
     manual_required_timeout: float = 300.0
+    stationary_threshold_px: float = 150.0
 
 
 @dataclass

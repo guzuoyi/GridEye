@@ -334,11 +334,12 @@ class StateMachine:
         dwell_frames_to_warning: int = 5,
         disappear_timeout_sec: float = 3.0,
         refresh_interval_sec: float = 30.0,
+        stationary_threshold_px: float = 150.0,
     ):
         self.dwell_frames = dwell_frames_to_warning
         self.disappear_timeout = disappear_timeout_sec
         self.refresh_interval = refresh_interval_sec
-        self.stationary_threshold_px = 60  # 中心点最大位移 < 60px 视为静止
+        self.stationary_threshold_px = stationary_threshold_px
 
     def evaluate(
         self,

@@ -5,7 +5,7 @@
 
 # ---- 视频源 ----------------------------------------------------------------
 video:
-  source: "data/test1.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
+  source: "data/test.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
   fps: 2                           # 抽帧速率 (1~2 FPS)
   original_width: 1920
   original_height: 1080
@@ -15,7 +15,7 @@ yolo:
   model_path: "models/rtdetr-l.pt" # YOLOv11n 权重路径
   input_size: 640                  # YOLO 输入尺寸 (正方形)
   confidence_threshold: 0.15
-  night_mode: true       # 置信度下限
+  night_mode: false       # 置信度下限
   classes:                          # 关注的类别映射
     - car          # 0
     - truck        # 1
@@ -46,11 +46,12 @@ flicker:
 # ---- 位置缓存与匹配 ---------------------------------------------------------
 position_cache:
   match_distance_px: 150            # 中心点欧氏距离匹配阈值 (1920x1080)
-  disappear_timeout_sec: 8.0       # 未命中超时 (秒)
+  disappear_timeout_sec: 1.5       # 未命中超时 (秒)
 
 # ---- 状态机 -----------------------------------------------------------------
 state_machine:
-  dwell_frames_to_warning: 6       # 连续驻留帧数 → WARNING
+  dwell_frames_to_warning: 9
+  stationary_threshold_px: 200       # 连续驻留帧数 → WARNING
   confirmed_refresh_interval: 30.0 # CONFIRMED 周期性刷新间隔 (秒)
   manual_required_timeout: 300     # MANUAL_REQUIRED 未确认超时 (秒)
 

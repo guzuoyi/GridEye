@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from logging import getLogger
 
+import csv
+from pathlib import Path
 from src.cache.cache import (
     State, StateMachine, PositionCache, PositionRecord,
 )
@@ -78,6 +80,11 @@ class MainPipeline:
         # 统计
         self.total_frames = 0
         self.total_qwen_calls = 0
+        # CSV + 截图输出
+        self._results_dir = Path("results")
+        self._results_dir.mkdir(exist_ok=True)
+        self._csv_path = self._results_dir / "qwen_results.csv"
+        self._init_csv()
 
     # ---- Setup --------------------------------------------------------------
 
@@ -130,6 +137,7 @@ class MainPipeline:
             dwell_frames_to_warning=self.cfg.state_machine.dwell_frames_to_warning,
             disappear_timeout_sec=self.cfg.position_cache.disappear_timeout_sec,
             refresh_interval_sec=self.cfg.state_machine.confirmed_refresh_interval,
+            stationary_threshold_px=self.cfg.state_machine.stationary_threshold_px,
         )
 
         # --- Qwen ---
@@ -274,6 +282,20 @@ class MainPipeline:
 
     # ---- Internal -----------------------------------------------------------
 
+    def _init_csv(self) -> None:
+        """初始化 CSV 文件，写入表头。"""
+        if not self._csv_path.exists():
+            import csv
+            with open(self._csv_path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                w.writerow([
+                    'timestamp', 'frame_idx', 'record_id', 'class', 'lane',
+                    'distance', 'consecutive_frames', 'state',
+                    'is_anomaly', 'event_type', 'confidence', 'reasoning',
+                    'risk_cleared', 'need_cleanup',
+                    'elapsed_sec', 'tokens', 'crop_image'
+                ])
+
     def _make_pseudo_id(self, detection) -> str:
         """为检测生成伪 ID（用于防闪烁）。"""
         cx, cy = detection.center
@@ -291,6 +313,19 @@ class MainPipeline:
             rec.lane_number = lane
             rec.longitudinal_distance = dist
 
+        # 过滤：consecutive_frames < 2 的单帧目标不触发状态机
+        if rec.consecutive_frames < 2:
+            return
+
+        # 过滤：画面顶部 40% 区域（y < 0.4*H）非道路，跳过
+        h = frame.shape[0]
+        if rec.center_y < h * 0.4:
+            return
+
+        # 过滤：lane=-1（道路外目标）且距离 < 5m（过于靠近边缘）
+        if rec.lane_number < 0 and self.lut_maintainer is not None:
+            return
+
         # 状态机评估
         new_state, needs_qwen, reason = self.state_machine.evaluate(
             rec, current_time=ts
@@ -302,11 +337,48 @@ class MainPipeline:
         if needs_qwen and rec.state == State.WARNING:
             self._enqueue_qwen(rec, frame)
 
+    def _save_crop(self, rec: PositionRecord, image: np.ndarray) -> str:
+        """保存裁剪图到 results/ 目录，返回相对路径。"""
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        rid = rec.id[:8]
+        fname = f"crop_{ts}_{rid}.jpg"
+        path = self._results_dir / fname
+        cv2.imwrite(str(path), image)
+        return str(path)
+
+    def _append_csv(self, rec: PositionRecord, result, parsed: dict,
+                    crop_path: str, call_type: str) -> None:
+        """追加一条 Qwen 结果到 CSV。"""
+        with open(self._csv_path, 'a', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow([
+                time.strftime("%Y-%m-%dT%H:%M:%S"),
+                self.total_frames,
+                rec.id[:8],
+                rec.class_name,
+                rec.lane_number,
+                round(rec.longitudinal_distance, 1),
+                rec.consecutive_frames,
+                rec.state.value,
+                parsed.get('is_anomaly', ''),
+                parsed.get('event_type', ''),
+                parsed.get('confidence', ''),
+                parsed.get('reasoning', ''),
+                parsed.get('risk_cleared', ''),
+                parsed.get('need_cleanup', ''),
+                round(result.elapsed_sec, 1) if hasattr(result, 'elapsed_sec') else '',
+                result.tokens if hasattr(result, 'tokens') else '',
+                crop_path,
+            ])
+
     def _enqueue_qwen(self, rec: PositionRecord, frame: np.ndarray) -> None:
-        """将 Qwen 调用入队。"""
+        """将 Qwen 调用入队（同时保存裁剪图）。"""
+        crop = None
+        crop_path = ""
         if rec.state == State.WARNING:
-            # 裁剪目标区域
             crop = self._crop_target(frame, rec)
+            if crop is not None:
+                crop_path = self._save_crop(rec, crop)
             req = QwenCallRequest(
                 call_type=CallType.EVENT_CONFIRM,
                 record_id=rec.id,
@@ -319,7 +391,7 @@ class MainPipeline:
                     rec.elapsed_in_state(State.WARNING),
                 ),
                 image=crop,
-                callback=lambda r: self._on_qwen_result(rec.id, r),
+                callback=lambda r, cp=crop_path: self._on_qwen_result(rec.id, r, cp),
             )
             self.qwen_scheduler.enqueue(req)
 
@@ -341,7 +413,7 @@ class MainPipeline:
             )
             self.qwen_scheduler.enqueue(req)
 
-    def _on_qwen_result(self, record_id: str, result) -> None:
+    def _on_qwen_result(self, record_id: str, result, crop_path: str = "") -> None:
         """Qwen 回调：解析结果并更新状态。"""
         rec = self.cache.get(record_id)
         if rec is None:
@@ -395,6 +467,9 @@ class MainPipeline:
                 )
                 self.state_machine.apply_transition(rec, new_state, qwen_result=qr)
 
+            if result.success:
+                self._append_csv(rec, result, parsed, crop_path, rec.state.value)
+
             self.total_qwen_calls += 1
 
     def _crop_target(
@@ -431,7 +506,10 @@ class MainPipeline:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
         # 2. 画位置缓存记录（彩色圆 + 状态）
+        # 连续帧 < 2 的不画（单帧误检不显示）
         for rec in records:
+            if rec.consecutive_frames < 2:
+                continue
             color = STATE_COLORS.get(rec.state, (255, 255, 255))
             cx, cy = int(rec.center_x), int(rec.center_y)
             r = 25
