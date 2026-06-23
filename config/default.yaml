@@ -5,14 +5,14 @@
 
 # ---- 视频源 ----------------------------------------------------------------
 video:
-  source: "data/test.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
+  source: "data/test1.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
   fps: 2                           # 抽帧速率 (1~2 FPS)
   original_width: 1920
   original_height: 1080
 
 # ---- YOLO 检测 -------------------------------------------------------------
 yolo:
-  model_path: "models/yolo11s1.pt" # YOLOv11n 权重路径
+  model_path: "models/rtdetr-l.pt" # YOLOv11n 权重路径
   input_size: 640                  # YOLO 输入尺寸 (正方形)
   confidence_threshold: 0.15
   night_mode: true       # 置信度下限

@@ -51,9 +51,14 @@ class YOLODetector:
         self._class_map: Optional[dict] = None
 
     def load(self) -> None:
-        """加载 YOLO 模型（惰性加载，避免 import torch 开销）。"""
-        from ultralytics import YOLO
-        self._model = YOLO(self.model_path, task="detect")
+        """加载检测模型（惰性加载，支持 YOLO / RTDETR）。"""
+        model_path_lower = self.model_path.lower()
+        if 'rtdetr' in model_path_lower or 'rt-detr' in model_path_lower:
+            from ultralytics import RTDETR
+            self._model = RTDETR(self.model_path)
+        else:
+            from ultralytics import YOLO
+            self._model = YOLO(self.model_path, task="detect")
         # 构建类别编号 → 名称映射
         self._build_class_map()
 
