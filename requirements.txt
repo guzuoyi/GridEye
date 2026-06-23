@@ -1,0 +1,22 @@
+# 高速公路交通事件二次识别系统
+# Python 3.10+
+
+# 计算机视觉
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# YOLO 目标检测
+ultralytics>=8.0.0
+torch>=2.0.0
+
+# 大模型调用（LM Studio OpenAI 兼容 API）
+openai>=1.0.0
+
+# 配置管理
+pyyaml>=6.0
+
+# 测试
+pytest>=7.0.0
+
+# 可选：可视化调试
+matplotlib>=3.7.0

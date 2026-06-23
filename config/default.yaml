@@ -1,0 +1,94 @@
+# ============================================================================
+# 高速公路交通事件二次识别系统 —— 默认配置
+# ============================================================================
+# 所有阈值、距离、查找表均基于 1920x1080 原始分辨率
+
+# ---- 视频源 ----------------------------------------------------------------
+video:
+  source: "data/test.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
+  fps: 2                           # 抽帧速率 (1~2 FPS)
+  original_width: 1920
+  original_height: 1080
+
+# ---- YOLO 检测 -------------------------------------------------------------
+yolo:
+  model_path: "models/yolo11s1.pt" # YOLOv11n 权重路径
+  input_size: 640                  # YOLO 输入尺寸 (正方形)
+  confidence_threshold: 0.15
+  night_mode: true       # 置信度下限
+  classes:                          # 关注的类别映射
+    - car          # 0
+    - truck        # 1
+    - person       # 2
+    - two-wheeler  # 3 (bicycle + motorcycle)
+
+# ---- 尺寸过滤 ---------------------------------------------------------------
+size_filter:
+  person:
+    min_height: 35
+    min_area: 1000
+  car:
+    min_height: 22
+    min_area: 1500
+  truck:
+    min_height: 28
+    min_area: 2000
+  two-wheeler:
+    min_height: 22
+    min_area: 1000
+
+# ---- 防闪烁 -----------------------------------------------------------------
+flicker:
+  window_frames: 10                # 滑动窗口帧数
+  stable_threshold: 7              # 最近 N 帧中 >= 7 帧有效 → 稳定
+  size_scale: 0.8                  # 尺寸阈值放宽系数
+
+# ---- 位置缓存与匹配 ---------------------------------------------------------
+position_cache:
+  match_distance_px: 150            # 中心点欧氏距离匹配阈值 (1920x1080)
+  disappear_timeout_sec: 8.0       # 未命中超时 (秒)
+
+# ---- 状态机 -----------------------------------------------------------------
+state_machine:
+  dwell_frames_to_warning: 6       # 连续驻留帧数 → WARNING
+  confirmed_refresh_interval: 30.0 # CONFIRMED 周期性刷新间隔 (秒)
+  manual_required_timeout: 300     # MANUAL_REQUIRED 未确认超时 (秒)
+
+# ---- 查找表 -----------------------------------------------------------------
+lut:
+  path: "config/lut.npy"           # 查找表文件路径
+  lane_width_m: 3.75               # 标准车道宽度 (米)
+  maintenance_time: "03:00"        # 每日维护触发时间
+
+# ---- IPM / 标定 -------------------------------------------------------------
+calibration:
+  camera_params: "config/camera_params.yaml"
+  ipm_params: "config/ipm_params.yaml"
+  chessboard:
+    pattern: [9, 6]                # 棋盘格内角点数 (cols, rows)
+    square_size_mm: 25             # 格子边长 (mm)
+
+# ---- Qwen 大模型 (LM Studio) ------------------------------------------------
+qwen:
+  base_url: "http://192.168.3.251:1234/v1"
+  api_key: "lm-studio"             # LM Studio 本地不校验
+  model_name: "qwen3.5-9b-uncensored-hauhaucs-aggressive"  # reasoning disabled 中加载的模型名
+  crop_size: 448                   # 送入 Qwen 的裁剪图尺寸
+  temperature: 0.1
+  max_tokens: 512
+  timeout_sec: 15                  # 单次请求超时
+  max_retries: 3                   # 失败重试次数
+  max_concurrency: 2               # 最大并发数
+
+# ---- 延迟预算 ----------------------------------------------------------------
+latency:
+  end_to_end_max_sec: 5.0          # 端到端延迟上限
+
+# ---- 归档 --------------------------------------------------------------------
+archive:
+  root: "archive"                  # 归档根目录
+
+# ---- 日志 --------------------------------------------------------------------
+logging:
+  level: "INFO"                    # DEBUG / INFO / WARNING / ERROR
+  format: "%(asctime)s [%(name)s] %(levelname)s: %(message)s"

@@ -1,0 +1,25 @@
+# Large model weights
+models/*.pt
+
+# Test videos
+data/*.mp4
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Archive data
+archive/
+
+# Temp fix scripts
+_fix*.py
+_f*.py
+*.py
+!src/**/*.py
+!tests/**/*.py
+!run.py
