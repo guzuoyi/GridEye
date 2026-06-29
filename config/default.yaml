@@ -6,7 +6,7 @@
 # ---- 视频源 ----------------------------------------------------------------
 video:
   source: "data/test.mp4"   # 视频文件路径 / RTSP URL / 摄像头 index
-  fps: 2                           # 抽帧速率 (1~2 FPS)
+  fps: 5                           # 抽帧速率 (5 FPS)
   original_width: 1920
   original_height: 1080
 
@@ -46,12 +46,12 @@ flicker:
 # ---- 位置缓存与匹配 ---------------------------------------------------------
 position_cache:
   match_distance_px: 150            # 中心点欧氏距离匹配阈值 (1920x1080)
-  disappear_timeout_sec: 1.5       # 未命中超时 (秒)
+  disappear_timeout_sec: 5.0       # 未命中超时 (秒) — 5fps 适配
 
 # ---- 状态机 -----------------------------------------------------------------
 state_machine:
-  dwell_frames_to_warning: 9
-  stationary_threshold_px: 200       # 连续驻留帧数 → WARNING
+  dwell_frames_to_warning: 7        # 10帧内驻留≥7帧 → WARNING
+  stationary_threshold_px: 200      # 中心点位移 < 200px → 静止
   confirmed_refresh_interval: 30.0 # CONFIRMED 周期性刷新间隔 (秒)
   manual_required_timeout: 300     # MANUAL_REQUIRED 未确认超时 (秒)
 
@@ -71,8 +71,8 @@ calibration:
 
 # ---- Qwen 大模型 (LM Studio) ------------------------------------------------
 qwen:
-  base_url: "http://192.168.3.251:1234/v1"
-  api_key: "lm-studio"             # LM Studio 本地不校验
+  base_url: "http://127.0.0.1:1234/v1"
+  api_key: "sk-lm-FczODhQH:9SQ9SZdyT6FVVtJ9xvlQ"
   model_name: "qwen3.5-9b-uncensored-hauhaucs-aggressive"  # reasoning disabled 中加载的模型名
   crop_size: 448                   # 送入 Qwen 的裁剪图尺寸
   temperature: 0.1

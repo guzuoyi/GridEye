@@ -1,30 +1,53 @@
-# Large model weights
-models/*.pt
-
-# Test videos
-data/*.mp4
-
-# Python cache
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Model files
+*.pt
+*.pth
+*.onnx
+
+# Results & downloads
+results/
+papers/
+data/
+backup_v*/
+models/
+
+# Downloaded repos / temp projects
+20260616/
+MemRoadNet-main/
+RT-DETR-main/
+USNet-main/
+usnet_src/
+rtdetr-main.zip
+
+# Test outputs
+*.jpg
+*.png
+*.bmp
 
 # IDE
 .vscode/
 .idea/
 
-# Archive data
-archive/
+# OS
+.DS_Store
+Thumbs.db
 
-# Temp files
-_fix*.py
-_f*.py
-debug*.py
-debug*.txt
-test_*.py
-!tests/**
-*.whl
-*.log
-
-# Git
-.gitignore
+# Experiment debris
+_check_repo.py
+_get_repo_files.py
+experiment*.py
+simulate*.py
+plot_*.py
+fix_*.py
+check_model.py
+show.py
+test*.py
+train_*.py
+usnet_*.py
+build_*.py

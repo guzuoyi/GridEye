@@ -482,11 +482,11 @@ class RoadMask:
         self._mask: np.ndarray | None = None
         # 5 个顶点: [top_left, top_right, bottom_right, bottom_left]
         self.corners: list[list[int]] = [
-            [int(self.W * 0.25), int(self.H * 0.45)],  # 0 TL
-            [int(self.W * 0.75), int(self.H * 0.45)],  # 1 TR
-            [int(self.W * 0.85), int(self.H * 0.85)],  # 2 R
-            [int(self.W * 0.50), int(self.H * 0.95)],  # 3 BC (bottom center)
-            [int(self.W * 0.15), int(self.H * 0.85)],  # 4 L
+            [int(self.W * 0.18), int(self.H * 0.32)],  # 0 TL
+            [int(self.W * 0.82), int(self.H * 0.32)],  # 1 TR
+            [int(self.W * 0.90), int(self.H * 0.88)],  # 2 R
+            [int(self.W * 0.50), int(self.H * 0.95)],  # 3 BC
+            [int(self.W * 0.10), int(self.H * 0.88)],  # 4 L
         ]
         self._dragging_idx = -1
         self._drag_offset = (0, 0)
@@ -499,97 +499,161 @@ class RoadMask:
     def generate_from_lanes(self, frame: np.ndarray) -> np.ndarray:
         """基于车道线检测自动生成初始 5 边形。
 
-        步骤:
-            1. Canny 边缘检测
-            2. HoughLinesP 检测线段
-            3. 按斜率/位置聚合成左右车道线
-            4. 用车道线条的端点构建 5 边形
+        改进策略:
+            1. ROI 只处理画面下半部分
+            2. 形态学膨胀连接断裂车道线
+            3. HoughLinesP 检测 + 角度严格过滤
+            4. 聚类 + 拟合连续车道线
+            5. 平行扩增覆盖多车道
         """
+        W, H = self.W, self.H
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150)
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+
+        # ROI: 底部 60% + 中间 90% 宽度
+        roi_mask = np.zeros_like(blurred)
+        roi_top = int(H * 0.38)
+        roi_left = int(W * 0.02)
+        roi_right = int(W * 0.98)
+        roi_mask[roi_top:, roi_left:roi_right] = 255
+        masked = cv2.bitwise_and(blurred, roi_mask)
+
+        # 自适应 Canny
+        median_val = np.median(masked[masked > 0]) if np.any(masked > 0) else 100
+        low = max(20, int(median_val * 0.5))
+        high = min(200, int(median_val * 1.5))
+        edges = cv2.Canny(masked, low, high)
+
+        # 形态学膨胀连接断裂的线段
+        kernel = np.ones((3, 15), dtype=np.uint8)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
         lines = cv2.HoughLinesP(
             edges, rho=1, theta=np.pi / 180,
-            threshold=50, minLineLength=80, maxLineGap=50,
+            threshold=40, minLineLength=60, maxLineGap=80,
         )
 
-        left_pts, right_pts = [], []
-        W, H = self.W, self.H
-
+        # ---- 1. 收集线段 ----
+        segments = []
         if lines is not None:
             for l in lines:
                 x1, y1, x2, y2 = l[0]
                 if y2 == y1:
                     continue
                 slope = (x2 - x1) / (y2 - y1)
-                center_x = (x1 + x2) / 2
-                # 过滤水平线 (slope < 0.1)
-                if abs(slope) < 0.1:
+                # 角度过滤：车道线斜率 0.3~3.0 (对应 ~17°~72°)
+                if abs(slope) < 0.3 or abs(slope) > 3.0:
                     continue
-                # 按位置和斜率分左右
-                if center_x < W * 0.5 and slope > 0:
-                    left_pts.append((x1, y1))
-                    left_pts.append((x2, y2))
-                elif center_x >= W * 0.5 and slope < 0:
-                    right_pts.append((x1, y1))
-                    right_pts.append((x2, y2))
+                # 计算底部 x
+                bottom_y = H - 1
+                x_at_bottom = x1 + slope * (bottom_y - y1)
+                if 0 <= x_at_bottom < W:
+                    segments.append({
+                        'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                        'slope': slope, 'length': ((x2-x1)**2 + (y2-y1)**2)**0.5,
+                        'x_at_bottom': x_at_bottom,
+                        'pts': [(x1, y1), (x2, y2)],
+                    })
 
-        # 如果车道线检测失败，回退默认值
-        if len(left_pts) < 2 or len(right_pts) < 2:
-            self.corners = [
-                [int(W * 0.25), int(H * 0.45)],
-                [int(W * 0.75), int(H * 0.45)],
-                [int(W * 0.85), int(H * 0.85)],
-                [int(W * 0.50), int(H * 0.95)],
-                [int(W * 0.15), int(H * 0.85)],
-            ]
-            return self._update_mask()
+        if len(segments) < 6:
+            return self._fallback_default()
 
-        # 提取最上端和最下端的点
-        left_pts.sort(key=lambda p: p[1])  # 按 y 排序
-        right_pts.sort(key=lambda p: p[1])
+        # ---- 2. 按底部 x 聚类 ----
+        segments.sort(key=lambda s: s['x_at_bottom'])
+        clusters = []
+        cur = [segments[0]]
+        cd = max(60, W * 0.03)
 
-        top_y = max(min(left_pts[0][1], right_pts[0][1]), 0)
-        bot_y = min(max(left_pts[-1][1], right_pts[-1][1]), H - 1)
+        for s in segments[1:]:
+            if abs(s['x_at_bottom'] - cur[-1]['x_at_bottom']) < cd:
+                cur.append(s)
+            else:
+                if len(cur) >= 2:
+                    clusters.append(cur)
+                cur = [s]
+        if len(cur) >= 2:
+            clusters.append(cur)
 
-        # 拟合左右车道线
-        left_arr = np.array(left_pts)
-        right_arr = np.array(right_pts)
-        if len(left_arr) >= 2:
-            l_coeffs = np.polyfit(left_arr[:, 1], left_arr[:, 0], 1)
-        else:
-            l_coeffs = [0, int(W * 0.25)]
-        if len(right_arr) >= 2:
-            r_coeffs = np.polyfit(right_arr[:, 1], right_arr[:, 0], 1)
-        else:
-            r_coeffs = [0, int(W * 0.75)]
+        if len(clusters) < 2:
+            return self._fallback_default()
 
-        # 计算四个角点
-        tl_x = max(0, int(l_coeffs[0] * top_y + l_coeffs[1]))
-        tr_x = min(W - 1, int(r_coeffs[0] * top_y + r_coeffs[1]))
-        bl_x = max(0, int(l_coeffs[0] * bot_y + l_coeffs[1]))
-        br_x = min(W - 1, int(r_coeffs[0] * bot_y + r_coeffs[1]))
-        bc_x = (bl_x + br_x) // 2  # 底部中点
+        # ---- 3. 拟合车道线 ----
+        lane_lines = []
+        for cluster in clusters:
+            pts = []
+            for seg in cluster:
+                pts.extend(seg['pts'])
+            a = np.array(pts)
+            if len(a) < 3:
+                continue
+            coeffs = np.polyfit(a[:, 1], a[:, 0], 1)
+            # 有效范围
+            y_vals = [p[1] for p in pts]
+            min_y = max(roi_top, min(y_vals))
+            max_y = min(H - 1, max(y_vals))
+            x_top = int(coeffs[0] * min_y + coeffs[1])
+            x_bot = int(coeffs[0] * max_y + coeffs[1])
+            if abs(x_bot - x_top) < 10:
+                continue
+            lane_lines.append({
+                'coeffs': coeffs,
+                'x_top': x_top, 'x_bot': x_bot,
+                'y_min': int(min_y), 'y_max': int(max_y),
+                'angle': np.arctan(coeffs[0]),
+            })
 
-        # 向外扩展 20% 以覆盖完整车道宽度
-        margin = int((tr_x - tl_x) * 0.15)
-        tl_x = max(0, tl_x - margin)
-        tr_x = min(W - 1, tr_x + margin)
-        bl_x = max(0, bl_x - margin)
-        br_x = min(W - 1, br_x + margin)
+        if len(lane_lines) < 2:
+            return self._fallback_default()
 
-        # 加一些底部垂直扩展
-        bot_y = min(H - 1, bot_y + int(H * 0.05))
+        # ---- 4. 按底部 x 排序 ----
+        lane_lines.sort(key=lambda l: l['x_bot'])
 
+        # ---- 5. 平行扩增 ----
+        # 取最左和最右的可靠车道线
+        left_line = lane_lines[0]
+        right_line = lane_lines[-1]
+
+        lane_width_px = (right_line['x_bot'] - left_line['x_bot']) / max(len(lane_lines) - 1, 1)
+        lane_width_px = max(min(lane_width_px, 250), 60)  # 限制车道宽度 60~250px
+
+        # 左右各扩 2 条车道
+        left_x = max(W * 0.02, left_line['x_bot'] - lane_width_px * 0.5)
+        right_x = min(W * 0.98, right_line['x_bot'] + lane_width_px * 0.5)
+
+        # ---- 6. 计算 5 边形 ----
+        avg_angle = np.mean([l['angle'] for l in lane_lines])
+        tan_a = np.tan(avg_angle)
+
+        top_y = roi_top
+        bot_y = int(H * 0.93)
+
+        tl_x = max(0, min(W-1, int(left_x - tan_a * (bot_y - top_y))))
+        tr_x = max(0, min(W-1, int(right_x - tan_a * (bot_y - top_y))))
+        bl_x = max(0, int(left_x))
+        br_x = min(W-1, int(right_x))
+        bc_x = (bl_x + br_x) // 2
+
+        # 外扩 10%
+        mg = int(lane_width_px * 0.1)
         self.corners = [
-            [tl_x, top_y],      # 0 TL
-            [tr_x, top_y],      # 1 TR
-            [br_x, bot_y],      # 2 R
-            [bc_x, min(H-1, bot_y + int(H*0.03))],  # 3 BC
-            [bl_x, bot_y],      # 4 L
+            [max(0, tl_x - mg), top_y],
+            [min(W-1, tr_x + mg), top_y],
+            [min(W-1, br_x + mg), bot_y],
+            [bc_x, min(H-1, bot_y + int(H*0.02))],
+            [max(0, bl_x - mg), bot_y],
         ]
+        return self._update_mask()
 
+    def _fallback_default(self) -> np.ndarray:
+        """车道线检测失败时使用默认值。"""
+        W, H = self.W, self.H
+        self.corners = [
+            [int(W * 0.25), int(H * 0.45)],
+            [int(W * 0.75), int(H * 0.45)],
+            [int(W * 0.85), int(H * 0.85)],
+            [int(W * 0.50), int(H * 0.95)],
+            [int(W * 0.15), int(H * 0.85)],
+        ]
         return self._update_mask()
 
     def _update_mask(self) -> np.ndarray:

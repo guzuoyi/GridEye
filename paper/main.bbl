@@ -1,0 +1,87 @@
+\begin{thebibliography}{11}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{#1}
+\expandafter\ifx\csname urlstyle\endcsname\relax\else
+  \urlstyle{same}\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\doi{\begingroup \urlstyle{same}\Url}
+\else
+  \def\doi#1{\href{https://doi.org/#1}{\nolinkurl{#1}}}
+\fi
+
+\bibitem[Jia et~al.(2016)Jia, Lu, Wang, Zhang, and Shen]{jia2016}
+JIA D, LU K, WANG J, et~al.
+\newblock A survey on platoon-based vehicular cyber-physical
+  systems\allowbreak[J].
+\newblock IEEE Communications Surveys \& Tutorials, 2016, 18\allowbreak (1):
+  263-284.
+
+\bibitem[Petit et~al.(2015)Petit and Shladover]{petit2015}
+PETIT J, SHLADOVER S~E.
+\newblock Potential cyberattacks on automated vehicles\allowbreak[J].
+\newblock IEEE Transactions on Intelligent Transportation Systems, 2015,
+  16\allowbreak (2): 546-556.
+
+\bibitem[Geng et~al.(2025)Geng, Ding, Yao, and Lv]{geng2025}
+GENG M, DING H, YAO X, et~al.
+\newblock Resilient distributed quadrotor {UAVs} game: addressing {FDI} and
+  physical attacks\allowbreak[J].
+\newblock IEEE Transactions on Vehicular Technology, 2025, 74\allowbreak (8):
+  13029-13040.
+
+\bibitem[Sargolzaei(2021)]{sargolzaei2021}
+SARGOLZAEI A.
+\newblock A secure control design for networked control system with nonlinear
+  dynamics under false-data-injection attacks\allowbreak[C]//\allowbreak
+2021 american control conference (ACC).
+\newblock 2021: 2693-2699.
+
+\bibitem[Yang et~al.(2022)Yang, Gu, Hua, and Yan]{yang2022}
+YANG F, GU Z, HUA L, et~al.
+\newblock A resource-aware control approach to vehicle platoons under false
+  data injection attacks\allowbreak[J].
+\newblock ISA Transactions, 2022, 131: 367-376.
+
+\bibitem[Ren et~al.(2020)Ren and Yang]{ren2020}
+REN X, YANG G.
+\newblock Adaptive control for nonlinear cyber-physical systems under false
+  data injection attacks through sensor networks\allowbreak[J].
+\newblock International Journal of Robust and Nonlinear Control, 2020,
+  30\allowbreak (1): 65-79.
+
+\bibitem[Xia et~al.(2026)Xia, Liu, Ren, Chen, and Wang]{xia2026}
+XIA Z W, LIU C, REN X Q, et~al.
+\newblock Hierarchical game-based optimal security control of vehicular platoon
+  systems against {FDI} attacks\allowbreak[J].
+\newblock IEEE Transactions on Vehicular Technology, 2026, 75\allowbreak (6):
+  9629-9640.
+
+\bibitem[Xu et~al.(2022)Xu, Yang, Jiang, and Polycarpou]{xu2022}
+XU Y, YANG H, JIANG B, et~al.
+\newblock Distributed optimal fault estimation and fault-tolerant control for
+  interconnected systems: a stackelberg differential graphical game
+  approach\allowbreak[J].
+\newblock IEEE Transactions on Automatic Control, 2022, 67\allowbreak (2):
+  926-933.
+
+\bibitem[Wang et~al.(2024)Wang, Liu, Lan, Ren, Meng, and Wang]{wang2024}
+WANG Q, LIU C, LAN J, et~al.
+\newblock Distributed secure surrounding control for multiple {USVs} against
+  deception attacks: a stackelberg game approach with reinforcement
+  learning\allowbreak[J].
+\newblock IEEE Transactions on Intelligent Vehicles, 2024, 9\allowbreak (11):
+  7003-7015.
+
+\bibitem[Marelli et~al.(2023)Marelli and Fu]{marelli2023}
+MARELLI D, FU M.
+\newblock A network gain theorem for interconnected systems\allowbreak[J].
+\newblock IFAC-PapersOnLine, 2023, 56\allowbreak (2): 3868-3873.
+
+\bibitem[Pan et~al.(2024)Pan, Chen, Chen, and Ali]{pan2024}
+PAN C, CHEN Y, CHEN Q, et~al.
+\newblock Distributed fuzzy resilient control for vehicular platooning system
+  with multiple nodes attacks in prescribed performance\allowbreak[J].
+\newblock IEEE Transactions on Vehicular Technology, 2024, 73\allowbreak (5):
+  6129-6142.
+
+\end{thebibliography}

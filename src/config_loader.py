@@ -43,7 +43,7 @@ class StateMachineConfig:
     dwell_frames_to_warning: int = 5
     confirmed_refresh_interval: float = 30.0
     manual_required_timeout: float = 300.0
-    stationary_threshold_px: float = 150.0
+    stationary_threshold_px: float = 200.0
 
 
 @dataclass
@@ -146,6 +146,7 @@ class ConfigLoader:
         sm = raw.get("state_machine", {})
         state_machine = StateMachineConfig(
             dwell_frames_to_warning=sm.get("dwell_frames_to_warning", 5),
+            stationary_threshold_px=sm.get("stationary_threshold_px", 200),
             confirmed_refresh_interval=sm.get("confirmed_refresh_interval", 30.0),
             manual_required_timeout=sm.get("manual_required_timeout", 300),
         )

@@ -34,6 +34,7 @@ STATE_COLORS = {
     State.CLEARED: (255, 255, 0),              # cyan
     State.MANUAL_REQUIRED: (0, 0, 200),        # dark red
 }
+LOCKED_COLOR = (0, 140, 255)  # orange — 锁定的 IDLE 状态
 
 
 @dataclass
@@ -326,24 +327,9 @@ class MainPipeline:
     def _process_record(
         self, rec: PositionRecord, frame: np.ndarray, ts: float
     ) -> None:
-        """处理单条位置记录：查表 + 状态机 + Qwen 触发。"""
-        # 查表定位（如果有 LUT）
-        if self.lut_maintainer is not None:
-            lane, dist = self.lut_maintainer.lookup(
-                int(rec.center_x), int(rec.center_y)
-            )
-            rec.lane_number = lane
-            rec.longitudinal_distance = dist
-
-        # 过滤：consecutive_frames < 2 的单帧目标不触发状态机
+        """处理单条位置记录：状态机 + Qwen 触发。"""
         if rec.consecutive_frames < 2:
             return
-
-        # 过滤：lane=-1 且 LUT 存在（道路外目标）
-        if rec.lane_number < 0 and self.lut_maintainer is not None:
-            return
-
-        # 过滤：不在路面掩码内
         if self.road_mask is not None and not self.road_mask.contains(rec.center_x, rec.center_y):
             return
 
@@ -355,7 +341,10 @@ class MainPipeline:
         if new_state != rec.state or needs_qwen:
             self.state_machine.apply_transition(rec, new_state, current_time=ts)
 
-        if needs_qwen and rec.state == State.WARNING:
+        if needs_qwen and rec.state in (State.WARNING, State.CLEARED):
+            # WARNING 时保存裁剪图
+            if rec.state == State.WARNING and not hasattr(rec, '_crop_saved'):
+                rec._crop_saved = self._crop_at_lock(rec, frame)
             self._enqueue_qwen(rec, frame)
 
     def _save_crop(self, rec: PositionRecord, image: np.ndarray) -> str:
@@ -392,26 +381,36 @@ class MainPipeline:
                 crop_path,
             ])
 
-    def _enqueue_qwen(self, rec: PositionRecord, frame: np.ndarray) -> None:
-        """将 Qwen 调用入队（同时保存裁剪图）。"""
-        crop = None
-        crop_path = ""
+    def _crop_at_lock(self, rec, frame) -> str:
+        """锁定时保存裁剪图快照，返回路径"""
+        margin = 30
+        cx, cy = int(rec._locked_cx), int(rec._locked_cy)
+        h, w = frame.shape[:2]
+        x1 = max(0, cx - margin)
+        y1 = max(0, cy - margin)
+        x2 = min(w, cx + margin)
+        y2 = min(h, cy + margin)
+        crop = frame[y1:y2, x1:x2]
+        return self._save_crop(rec, crop)
+
+    def _enqueue_qwen(self, rec, frame):
+        """WARNING / CLEARED 均使用锁定时的裁剪图"""
+        if rec._qwen_pending:
+            return
+        rec._qwen_pending = True
+
+        crop_path = getattr(rec, '_crop_saved', '')
+
         if rec.state == State.WARNING:
-            crop = self._crop_target(frame, rec)
-            if crop is not None:
-                crop_path = self._save_crop(rec, crop)
             req = QwenCallRequest(
                 call_type=CallType.EVENT_CONFIRM,
                 record_id=rec.id,
                 system_prompt=SYSTEM_EVENT_CONFIRM,
                 user_text=prompt_event_confirm(
-                    rec.class_name,
-                    rec.lane_number,
-                    rec.longitudinal_distance,
-                    rec.consecutive_frames,
-                    rec.elapsed_in_state(State.WARNING),
-                ),
-                image=crop,
+                    rec.class_name, rec.lane_number,
+                    rec.longitudinal_distance, rec.consecutive_frames,
+                    rec.elapsed_in_state(State.WARNING)),
+                image=None,  # LM Studio原生接口暂不支持图片；crop_path 用于 CSV
                 callback=lambda r, cp=crop_path: self._on_qwen_result(rec.id, r, cp),
             )
             self.qwen_scheduler.enqueue(req)
@@ -422,15 +421,11 @@ class MainPipeline:
                 record_id=rec.id,
                 system_prompt=SYSTEM_RISK_CLEARANCE,
                 user_text=prompt_risk_clearance(
-                    rec.class_name,
-                    rec.lane_number,
+                    rec.class_name, rec.lane_number,
                     rec.longitudinal_distance,
-                    rec.qwen_result.event_type if rec.qwen_result else "未知",
-                    "?",
-                    "?",
-                ),
+                    rec.qwen_result.event_type if rec.qwen_result else "未知", "?", "?"),
                 image=None,
-                callback=lambda r: self._on_qwen_result(rec.id, r),
+                callback=lambda r, cp=crop_path: self._on_qwen_result(rec.id, r, cp),
             )
             self.qwen_scheduler.enqueue(req)
 
@@ -439,6 +434,7 @@ class MainPipeline:
         rec = self.cache.get(record_id)
         if rec is None:
             return
+        rec._qwen_pending = False  # 请求完成，释放去重锁
 
         parsed = {}
         if result.success:
@@ -534,12 +530,17 @@ class MainPipeline:
             if self.road_mask is not None and not self.road_mask.contains(rec.center_x, rec.center_y):
                 continue
             color = STATE_COLORS.get(rec.state, (255, 255, 255))
+            # 锁定的 IDLE 显示橙色
+            if rec.state == State.IDLE and getattr(rec, '_locked', False):
+                color = LOCKED_COLOR
             cx, cy = int(rec.center_x), int(rec.center_y)
             r = 25
             cv2.circle(out, (cx, cy), 4, color, -1)  # 实心
             cv2.circle(out, (cx, cy), r, color, 1)   # 空心
 
             state_short = rec.state.value[:4]
+            if getattr(rec, '_locked', False) and rec.state == State.IDLE:
+                state_short = "SUSP"
             label = (
                 f"{rec.class_name} [{state_short}] "
                 f"d={rec.consecutive_frames} L{rec.lane_number}"
