@@ -51,3 +51,7 @@ test*.py
 train_*.py
 usnet_*.py
 build_*.py
+
+
+# 只保留 run_v7.py，其余隐藏
+*
